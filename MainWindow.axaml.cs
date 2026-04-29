@@ -13,50 +13,176 @@ public partial class MainWindow : Window
     private System.Timers.Timer? _exitTopTimer;
     private IntPtr _overlayNsHandle = IntPtr.Zero;
 
+    private bool _monitoring = true;
+
+    private bool _overlayLevelApplied = false;
+
     public MainWindow()
     {
         InitializeComponent();
+
         this.Closing += PreventClosing;
         this.Opened += OnWindowOpened;
+
         this.SystemDecorations = SystemDecorations.None;
         this.Topmost = true;
-        this.ExtendClientAreaToDecorationsHint = true;
-        this.ExtendClientAreaChromeHints = Avalonia.Platform.ExtendClientAreaChromeHints.NoChrome;
-        this.ExtendClientAreaTitleBarHeightHint = -1;
-        this.WindowState = WindowState.Maximized;
+        this.WindowState = WindowState.FullScreen;
     }
 
     private async void OnWindowOpened(object? sender, EventArgs e)
     {
 
-        KeyBlocker.Start();
-        try
-        {
-            var handle = this.TryGetPlatformHandle();
-            if (handle != null)
-            {
-                await Task.Delay(500);
-                KioskMode.Enable(handle.Handle);
-                this.Activate();
-                this.Focus();
-            }
-        }
-        catch (Exception ex) { Console.WriteLine($"❌ KioskMode: {ex.Message}"); }
+        // KeyBlocker.Start();
+        // try
+        // {
+        //     var handle = this.TryGetPlatformHandle();
+        //     if (handle != null)
+        //     {
+        //         await Task.Delay(500);
+        //         KioskMode.Enable(handle.Handle);
+        //         this.Activate();
+        //         this.Focus();
+        //     }
+        // }
+        // catch (Exception ex) { Console.WriteLine($"❌ KioskMode: {ex.Message}"); }
 
-        try { MultiMonitorBlocker.BlockSecondaryScreens(this); }
-        catch (Exception ex) { Console.WriteLine($"❌ MultiMonitor: {ex.Message}"); }
+        // try { MultiMonitorBlocker.BlockSecondaryScreens(this); }
+        // catch (Exception ex) { Console.WriteLine($"❌ MultiMonitor: {ex.Message}"); }
 
-        try { ExamWebView.Url = new Uri("https://exam-app-ashy.vercel.app"); }
-        catch (Exception ex) { Console.WriteLine($"❌ WebView: {ex.Message}"); }
+        // try { ExamWebView.Url = new Uri("https://exam-app-ashy.vercel.app"); }
+        // catch (Exception ex) { Console.WriteLine($"❌ WebView: {ex.Message}"); }
 
-        await Task.Delay(3000);
-        CreateExitButtonOverlay();
+        // await Task.Delay(3000);
+        // CreateExitButtonOverlay();
         
-        // ✅ Give focus back to main window so WebView can receive input
-        await Task.Delay(500);
+        // // ✅ Give focus back to main window so WebView can receive input
+        // await Task.Delay(500);
+        // this.Activate();
+        // this.Focus();
+        // Console.WriteLine("✅ Focus returned to main window");
+
+        Console.WriteLine("✅ MainWindow opened successfully");
+
+        var isSecure = await InitializeSecurityAsync();
+
+        if (!isSecure)
+            return;
+
+        Console.WriteLine("✅ Security passed -- loading exam");
+
+        await LoadExamAsync();
+        await Task.Delay(1000);
+        CreateExitButtonOverlay();
+        _monitoring = true;
+        StartDisplayMonitoring();
         this.Activate();
         this.Focus();
-        Console.WriteLine("✅ Focus returned to main window");
+        
+    }
+
+    private async Task<bool> InitializeSecurityAsync()
+    {
+        try
+        {
+            bool keyboardOk = KeyBlocker.Start();
+            if (!keyboardOk)
+            {
+                ShowBlockingError("Enable Accessibility permission to continue.");
+                return false;
+            }
+
+            // 2. Native window handle
+            var handle = this.TryGetPlatformHandle();
+            if (handle == null)
+            {
+                ShowBlockingError("Unable to access system window.");
+                return false;
+            }
+
+            // 3. Enable kiosk
+            KioskMode.Enable(handle.Handle);
+            await Task.Delay(500);
+
+            // 4. Fullscreen enforcement
+            this.WindowState = WindowState.FullScreen;
+            await Task.Delay(500);
+
+            if (this.WindowState != WindowState.FullScreen)
+            {
+                ShowBlockingError("Failed to enter fullscreen mode.");
+                return false;
+            }
+
+            // 5. Display check
+            if (this.Screens.All.Count != 1)
+            {
+                MultiMonitorBlocker.BlockSecondaryScreens(this);
+                return false;
+            }
+
+            // 6. Start monitoring (non-blocking)
+            StartDisplayMonitoring();
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Security init error: {ex.Message}");
+            ShowBlockingError("Security initialization failed.");
+            return false;
+        }
+    }
+
+    private async Task LoadExamAsync()
+    {
+        try
+        {
+            // 🔒 Later replace with backend URL
+            var url = new Uri("https://exam-app-ashy.vercel.app");
+
+            ExamWebView.Url = url;
+
+            Console.WriteLine("🌐 Exam loaded");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ WebView error: {ex.Message}");
+            ShowBlockingError("Failed to load exam.");
+        }
+    }
+
+    private void StartDisplayMonitoring()
+    {
+        _ = Task.Run(async () =>
+        {
+            while (_monitoring)
+            {
+                await Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    if (this.Screens.All.Count != 1)
+                    {
+                        Console.WriteLine("🚨 Secondary display detected");
+                        ShowBlockingError("External display detected.");
+                    }
+                });
+
+                await Task.Delay(2000);
+            }
+        });
+    }
+
+    private void ShowBlockingError(string message)
+    {
+        this.Content = new TextBlock
+        {
+            Text = message,
+            Foreground = Brushes.White,
+            Background = Brushes.Black,
+            FontSize = 20,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Center,
+            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Center
+        };
     }
 
     private void CreateExitButtonOverlay()
@@ -104,6 +230,8 @@ public partial class MainWindow : Window
                 {
                     this.Activate();
                     this.Focus();
+
+                    
                 });
             });
         };
@@ -126,7 +254,7 @@ public partial class MainWindow : Window
                     Console.WriteLine($"✅ Got overlay handle: {_overlayNsHandle}");
                     KioskMode.SetOverlayLevel(_overlayNsHandle);
                     KioskMode.ForceRenderOverlay(_overlayNsHandle);
-                    
+                    _overlayLevelApplied = true;
                     // ✅ Make overlay non-activating (won't steal focus)
                     KioskMode.MakeOverlayClickable(_overlayNsHandle);
                     
@@ -146,24 +274,21 @@ public partial class MainWindow : Window
                 PositionExitOverlay();
         };
 
-        // ✅ Reduced timer frequency to reduce overhead
-        _exitTopTimer = new System.Timers.Timer(500);
+        _exitTopTimer = new System.Timers.Timer(2000);
         _exitTopTimer.Elapsed += (_, _) =>
         {
             Avalonia.Threading.Dispatcher.UIThread.Post(() =>
             {
-                if (_overlayNsHandle == IntPtr.Zero || _exitWindow == null) return;
-                try
+                if (_overlayNsHandle == IntPtr.Zero || _exitWindow == null)
+                    return;
+
+                if (!_exitWindow.IsVisible)
                 {
-                    if (!_exitWindow.IsVisible) 
-                    {
-                        Console.WriteLine("⚠️ Overlay became invisible, reshowing...");
-                        _exitWindow.Show();
-                    }
+                    Console.WriteLine("⚠️ Overlay missing, restoring...");
+                    _exitWindow.Show();
+
                     KioskMode.SetOverlayLevel(_overlayNsHandle);
-                    // ✅ Don't call ForceRenderOverlay in timer - it steals focus
                 }
-                catch { }
             });
         };
         _exitTopTimer.AutoReset = true;
@@ -196,6 +321,7 @@ public partial class MainWindow : Window
 
         try
         {
+            _monitoring = false;
             _exitTopTimer?.Stop();
             _exitTopTimer?.Dispose();
             _exitTopTimer = null;
@@ -209,7 +335,7 @@ public partial class MainWindow : Window
             this.Closing -= PreventClosing;
         }
         catch (Exception ex) { Console.WriteLine($"ExitApp error: {ex.Message}"); }
-
+        KeyBlocker.Stop();
         Environment.Exit(0);
     }
 

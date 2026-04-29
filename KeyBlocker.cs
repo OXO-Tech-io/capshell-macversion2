@@ -52,6 +52,7 @@ public static class KeyBlocker
     private static IntPtr _eventTap = IntPtr.Zero;
     private static Thread? _thread;
     private static bool _running = false;
+    private static bool _initSuccess = false;
 
     private static readonly HashSet<ulong> BlockedKeys = new()
     {
@@ -68,11 +69,12 @@ public static class KeyBlocker
     // START
     // =========================
 
-    public static void Start()
+    public static bool Start()
     {
-        if (_running) return;
+        if (_running) return true;
 
         _running = true;
+        _initSuccess = false;
 
         _thread = new Thread(() =>
         {
@@ -99,6 +101,7 @@ public static class KeyBlocker
                 }
 
                 Console.WriteLine("✅ Event tap created");
+                _initSuccess = true;
 
                 IntPtr runLoopSource = CFMachPortCreateRunLoopSource(IntPtr.Zero, _eventTap, 0);
                 IntPtr mode = CFStringCreateWithCString(IntPtr.Zero, "kCFRunLoopDefaultMode", 0);
@@ -122,6 +125,9 @@ public static class KeyBlocker
 
         _thread.IsBackground = false; // IMPORTANT: do NOT use background thread
         _thread.Start();
+
+        Thread.Sleep(500); // Give it a moment to start
+        return _initSuccess;
     }
 
     // =========================
